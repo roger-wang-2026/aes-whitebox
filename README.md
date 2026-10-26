@@ -1,5 +1,13 @@
 # AES Whitebox
 
+## License and copyright
+
+This project is distributed under the [BSD 2-Clause license](LICENSE).
+The original implementation is copyright (c) 2019 Guilherme Balena Versiani.
+Modifications and additions by wangzhiyan are copyright (c) 2026 wangzhiyan
+and are distributed under the same license. Original copyright notices are
+retained.
+
 A research implementation of table-based white-box AES, based on
 [Chow et al.](https://www.cs.colorado.edu/~jrblack/class/csci7000/s03/project/oorschot-whitebox.pdf)
 and [Muir's tutorial](https://eprint.iacr.org/2013/104.pdf).

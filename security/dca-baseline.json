@@ -1,0 +1,54 @@
+{
+  "checked_at_utc": "2026-10-26T05:48:28.987822+00:00",
+  "status": "cancelled_before_measurement",
+  "note": "DCA work stopped at the user request. No valid traces or key-recovery measurements were obtained.",
+  "baseline_commit": "6c47af74aef5042c57315e44c6495049c0ff6072",
+  "after_seed": "42",
+  "input_seed": 20261026,
+  "requested_traces_per_variant": 200,
+  "scope": "whole executable including external encoding adapters",
+  "attempts": [
+    {
+      "environment": "Apple Silicon Docker/Rosetta, Linux x86_64 guest",
+      "status": "tool_error",
+      "error": "PIN: expected binary for the Intel(R) 64 architecture"
+    },
+    {
+      "environment": "Native Linux x86_64 server, Ubuntu 22.04 container",
+      "status": "tool_error",
+      "error": "PIN failed to load libxed.so; exit 127. Investigation stopped at the user request."
+    }
+  ],
+  "before": {
+    "traces_collected": 0,
+    "key_recovered": null,
+    "traces_to_recovery": null
+  },
+  "after": {
+    "traces_collected": 0,
+    "key_recovered": null,
+    "traces_to_recovery": null
+  },
+  "artifacts": {
+    "before": {
+      "target": "de0f8f2af1d99122f3487d1e7c847bc67acab69cdcfaa397af09abfa6ba1de3e",
+      "aes_whitebox_tables.cc": "31ea152dfa6a031946afb3e65ce81cb53ff5a0634ed85206377109920368208c"
+    },
+    "after": {
+      "target": "2dbb70a18dbeeb22c204e239f9f2120e020bf700163d01f78bbfb5ccfe687c39",
+      "aes_whitebox_tables.cc": "e12c0a47be51c13b22f3ddb6a58c1fc17e11f0aa1707d2ce8bca00c2b20e84f2"
+    }
+  },
+  "working_sources": {
+    "aes_whitebox.cc": "5657f9c0c718994f859483cdd59c0b7ecf94dfc9d157577793f6d84c2dab6029",
+    "aes_whitebox_compiler.cc": "95cf4d30d59827c009ea587d0ddfa3f0953b2d710bcf14413e471ba66fe4d517",
+    "aes_whitebox.h": "aed45c20b2799097611bc732e9368008bdba81ec373db43a5ea1198282d061b9",
+    "aes_private.h": "08cd2ff80a9da50da6c313238dee5f19d827bec99003dfba1a803b993a04c254",
+    "hex.h": "0aecd5a59166f05a3b8f94a0e8b8589ea75cfa9c605b14f44d9c1d75030ce32c"
+  },
+  "tools": {
+    "Deadpool": "ba4f690cdbd6d65705b3450eee8bc4ba75b76cfc",
+    "Tracer": "8fe26af12d7dd37948d23efb2c1aa701557008ab",
+    "Daredevil": "81cb57f7bee16ea37becd7f68bbbefc433786390"
+  }
+}

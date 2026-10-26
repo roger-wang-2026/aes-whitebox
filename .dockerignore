@@ -7,3 +7,9 @@ Dockerfile
 .git
 .gitignore
 .dockerfile
+
+build/
+*.a
+__pycache__/
+.DS_Store
+pin.log

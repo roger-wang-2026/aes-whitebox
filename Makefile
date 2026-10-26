@@ -1,5 +1,14 @@
-CFLAGS = -Og -ggdb -Wall
-CXXFLAGS = $(CFLAGS) -std=c++11
+CFLAGS ?= -Og -ggdb -Wall
+CXXFLAGS ?= $(CFLAGS) -std=c++11
+PYTHON ?= python3
+NTL_PREFIX ?= $(shell brew --prefix ntl 2>/dev/null)
+GMP_PREFIX ?= $(shell brew --prefix gmp 2>/dev/null)
+CPPFLAGS += $(if $(NTL_PREFIX),-I$(NTL_PREFIX)/include) $(if $(GMP_PREFIX),-I$(GMP_PREFIX)/include)
+LDFLAGS += $(if $(NTL_PREFIX),-L$(NTL_PREFIX)/lib) $(if $(GMP_PREFIX),-L$(GMP_PREFIX)/lib)
+NTL_PREFIX := $(NTL_PREFIX)
+GMP_PREFIX := $(GMP_PREFIX)
+LDLIBS ?= -lntl -lgmp -pthread
+.DEFAULT_GOAL := all
 
 # All tests were taken from NIST, 2001 test vectors:
 # https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
@@ -30,48 +39,74 @@ AES256_OFB_TEST_IV     = 000102030405060708090a0b0c0d0e0f
 AES256_CTR_TEST_CIPHER = 601ec313775789a5b7a7f504bbf3d228f443e3ca4d62b59aca84e990cacaf5c52b0930daa23de94ce87017ba2d84988ddfc9c58db67aada613c2dd08457941a6
 AES256_CTR_TEST_NONCE  = f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
 
-.PHONY: clean all
+.PHONY: all test clean equivalence robustness dca-prepare dca-preflight FORCE aes128_tests aes192_tests aes256_tests
+FORCE:
+all: test
 
-all: aes128_tests aes192_tests aes256_tests
+test: aes128_tests aes192_tests aes256_tests robustness
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+build:
+	mkdir -p $@
 
-%.o: %.cc
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+build/aes_whitebox_compiler.o: aes_whitebox_compiler.cc aes_private.h hex.h | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-libaes.a: aes.o
+build/aes_whitebox_compiler: build/aes_whitebox_compiler.o
+	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+build/aes.o: aes.cc aes.h aes_private.h | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
+
+libaes.a: build/aes.o
 	$(AR) $(ARFLAGS) $@ $^
 
-aes_whitebox_compiler: aes_whitebox_compiler.o
-	$(CXX) $(LDFLAGS) $^ -o $@ -lntl
+# A stamp owns both outputs, avoiding competing generator invocations in make -j.
+define AES_RULES
+build/aes$(1):
+	mkdir -p $$@
 
-aes128_tests: aes_whitebox_compiler
-	./aes_whitebox_compiler aes128 $(AES128_KEY)
-	$(CXX) $(CXXFLAGS) -c aes_whitebox.cc -o aes_whitebox.o
-	$(CC) $(CFLAGS) -c aes_tests.c -o aes_tests.o
-	$(CC) $(LDFLAGS) aes_whitebox.o aes_tests.o -o $@
-	./$@ cfb $(TEST_PLAIN) $(AES128_CFB_TEST_IV) $(AES128_CFB_TEST_CIPHER)
-	./$@ ofb $(TEST_PLAIN) $(AES128_OFB_TEST_IV) $(AES128_OFB_TEST_CIPHER)
-	./$@ ctr $(TEST_PLAIN) $(AES128_CTR_TEST_NONCE) $(AES128_CTR_TEST_CIPHER)
+build/aes$(1)/tables.stamp: build/aes_whitebox_compiler Makefile $$(if $$(and $$(wildcard build/aes$(1)/aes_whitebox_tables.cc),$$(wildcard build/aes$(1)/external_encodings.cc)),,FORCE) | build/aes$(1)
+	@if test ! -f $$@ || test build/aes_whitebox_compiler -nt $$@ || test Makefile -nt $$@ || test ! -s build/aes$(1)/aes_whitebox_tables.cc || test ! -s build/aes$(1)/external_encodings.cc; then \
+	  ./build/aes_whitebox_compiler aes$(1) $$(AES$(1)_KEY) --output build/aes$(1)/aes_whitebox_tables.cc --helpers build/aes$(1)/external_encodings.cc && touch $$@; \
+	fi
 
-aes192_tests: aes_whitebox_compiler
-	./aes_whitebox_compiler aes192 $(AES192_KEY)
-	$(CXX) $(CXXFLAGS) -c aes_whitebox.cc -o aes_whitebox.o
-	$(CC) $(CFLAGS) -c aes_tests.c -o aes_tests.o
-	$(CC) $(LDFLAGS) aes_whitebox.o aes_tests.o -o $@
-	./$@ cfb $(TEST_PLAIN) $(AES192_CFB_TEST_IV) $(AES192_CFB_TEST_CIPHER)
-	./$@ ofb $(TEST_PLAIN) $(AES192_OFB_TEST_IV) $(AES192_OFB_TEST_CIPHER)
-	./$@ ctr $(TEST_PLAIN) $(AES192_CTR_TEST_NONCE) $(AES192_CTR_TEST_CIPHER)
+build/aes$(1)/aes_whitebox_tables.cc build/aes$(1)/external_encodings.cc: | build/aes$(1)/tables.stamp
+	@test -s $$@
 
-aes256_tests: aes_whitebox_compiler
-	./aes_whitebox_compiler aes256 $(AES256_KEY)
-	$(CXX) $(CXXFLAGS) -c aes_whitebox.cc -o aes_whitebox.o
-	$(CC) $(CFLAGS) -c aes_tests.c -o aes_tests.o
-	$(CC) $(LDFLAGS) aes_whitebox.o aes_tests.o -o $@
-	./$@ cfb $(TEST_PLAIN) $(AES256_CFB_TEST_IV) $(AES256_CFB_TEST_CIPHER)
-	./$@ ofb $(TEST_PLAIN) $(AES256_OFB_TEST_IV) $(AES256_OFB_TEST_CIPHER)
-	./$@ ctr $(TEST_PLAIN) $(AES256_CTR_TEST_NONCE) $(AES256_CTR_TEST_CIPHER)
+build/aes$(1)/aes_whitebox.o: aes_whitebox.cc aes_whitebox.h build/aes$(1)/tables.stamp
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -Ibuild/aes$(1) -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/external_encodings.o: build/aes$(1)/external_encodings.cc build/aes$(1)/tables.stamp
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -MMD -MP -c build/aes$(1)/external_encodings.cc -o $$@
+
+build/aes$(1)/aes_tests.o: aes_tests.c aes_whitebox.h hex.h aunit.h | build/aes$(1)
+	$$(CC) $$(CPPFLAGS) $$(CFLAGS) -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/aes_tests: build/aes$(1)/aes_whitebox.o build/aes$(1)/external_encodings.o build/aes$(1)/aes_tests.o
+	$$(CXX) $$(LDFLAGS) $$^ -o $$@
+
+aes$(1)_tests: build/aes$(1)/aes_tests
+	./$$< cfb $$(TEST_PLAIN) $$(AES$(1)_CFB_TEST_IV) $$(AES$(1)_CFB_TEST_CIPHER)
+	./$$< ofb $$(TEST_PLAIN) $$(AES$(1)_OFB_TEST_IV) $$(AES$(1)_OFB_TEST_CIPHER)
+	./$$< ctr $$(TEST_PLAIN) $$(AES$(1)_CTR_TEST_NONCE) $$(AES$(1)_CTR_TEST_CIPHER)
+endef
+
+$(foreach bits,128 192 256,$(eval $(call AES_RULES,$(bits))))
+
+robustness: build/aes_whitebox_compiler build/aes128/aes_tests
+	$(PYTHON) tests/robustness.py
+
+equivalence: build/aes_whitebox_compiler
+	$(PYTHON) tests/equivalence.py
+
+dca-prepare: build/aes_whitebox_compiler
+	$(PYTHON) security/prepare_dca.py
+
+dca-preflight:
+	$(PYTHON) security/dca_preflight.py
 
 clean:
-	rm -f *.o *.a aes_whitebox_tables.cc aes_whitebox_compiler aes128_tests aes192_tests aes256_tests
+	rm -rf build
+	rm -f libaes.a
+
+-include $(wildcard build/*.d build/aes*/*.d)

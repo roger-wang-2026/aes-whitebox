@@ -1,21 +1,10 @@
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
-RUN mkdir /build
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential libntl-dev libgmp-dev python3 openssl \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
-
-RUN set -xe; \
-  \
-  apt update; \
-  apt -y install \
-    build-essential \
-    libntl-dev \
-    libntl35 \
-  ; \
-  apt clean autoclean; \
-  apt autoremove -y; \
-  rm -rf /var/lib/{apt,dpkg,cache,log}/;
-
 COPY . ./
-
-RUN set -xe; \
-  make
+RUN make -j3 && make equivalence

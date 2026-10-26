@@ -11,18 +11,16 @@
 #include <math.h>
 #include <string.h>
 
-#include "aes.h"
+#include "hex.h"
 #include "aes_whitebox.h"
 
 
 static void err_quit(const char *fmt, ...) {
   va_list ap;
-  char buf[1024];
 
   va_start(ap, fmt);
-  vsprintf(buf, fmt, ap);
-  strcat(buf, "\n");
-  fputs(buf, stderr);
+  vfprintf(stderr, fmt, ap);
+  fputc('\n', stderr);
   fflush(stderr);
   va_end(ap);
 
@@ -30,13 +28,8 @@ static void err_quit(const char *fmt, ...) {
 }
 
 static void read_hex(const char *in, uint8_t* v, size_t size, const char* param_name) {
-  if (strlen(in) != size << 1) {
-    err_quit("Invalid param %s (got %d, expected %d)",
-        param_name, strlen(in), size << 1);
-  }
-  for (size_t i = 0; i < size; i++) {
-    sscanf(in + i * 2, "%2hhx", v + i);
-  }
+  if (!parse_hex(in, v, size))
+    err_quit("Invalid param %s (expected %zu hexadecimal digits)", param_name, size*2);
 }
 
 void syntax(const char* program_name) {
@@ -56,13 +49,13 @@ au_main
   void (*decrypt)(const uint8_t iv[16], const uint8_t* m,
       size_t len, uint8_t* c) = NULL;
 
+  if (argc != 5) syntax(argv[0]);
+
   read_hex(argv[2], plain, 4*16, "plain");
   read_hex(argv[3], iv_or_nonce, 16, "iv-or-nonce");
   read_hex(argv[4], cipher, 4*16, "cipher");
 
-  if (argc != 5) {
-    syntax(argv[0]);
-  } else if (strcmp(argv[1], "cfb") == 0) {
+  if (strcmp(argv[1], "cfb") == 0) {
     encrypt = &aes_whitebox_encrypt_cfb;
     decrypt = &aes_whitebox_decrypt_cfb;
   } else if (strcmp(argv[1], "ofb") == 0) {
@@ -84,6 +77,19 @@ au_main
   au_eq("Encrypt, vector #2", memcmp(output, cipher, 7), 0);
   (*decrypt)(iv_or_nonce, cipher, 7, output);
   au_eq("Decrypt, vector #2", memcmp(output, plain, 7), 0);
+  const size_t lengths[] = {0, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64};
+  for (size_t i = 0; i < sizeof(lengths)/sizeof(lengths[0]); ++i) {
+    size_t len = lengths[i];
+    memset(output, 0xa5, sizeof(output));
+    memcpy(output, plain, len);
+    (*encrypt)(iv_or_nonce, output, len, output);
+    au_eq("In-place encrypt", memcmp(output, cipher, len), 0);
+    if (len < sizeof(output)) au_eq("Encrypt bounds", output[len], 0xa5);
+    (*decrypt)(iv_or_nonce, output, len, output);
+    au_eq("In-place decrypt", memcmp(output, plain, len), 0);
+    if (len < sizeof(output)) au_eq("Decrypt bounds", output[len], 0xa5);
+  }
+
 }
 
 au_endmain

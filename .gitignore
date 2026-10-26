@@ -7,3 +7,9 @@ aes_whitebox_compiler
 aes_whitebox_tables.cc
 *.sw[po]
 vgcore.*
+
+build/
+__pycache__/
+
+.DS_Store
+pin.log

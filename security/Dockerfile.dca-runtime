@@ -1,0 +1,7 @@
+# Runtime only: use the pinned tool/binary bundle recorded in dca-baseline.json.
+FROM ubuntu:22.04
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python2 libstdc++6 libgomp1 openssl \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /experiment

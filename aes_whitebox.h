@@ -18,6 +18,12 @@ void aes_whitebox_encrypt_encoded_block(const uint8_t in[16], uint8_t out[16]);
 void aes_whitebox_encode_input_block(const uint8_t in[16], uint8_t out[16]);
 void aes_whitebox_decode_output_block(const uint8_t in[16], uint8_t out[16]);
 
+// Optional inverse core and its separately generated external adapters.
+// Provided by aes_whitebox_decrypt.cc and matching decryption helper output.
+void aes_whitebox_decrypt_encoded_block(const uint8_t in[16], uint8_t out[16]);
+void aes_whitebox_decrypt_encode_input_block(const uint8_t in[16], uint8_t out[16]);
+void aes_whitebox_decrypt_decode_output_block(const uint8_t in[16], uint8_t out[16]);
+
 enum aes_whitebox_status {
   AES_WHITEBOX_OK = 0,
   AES_WHITEBOX_INVALID_LENGTH = -1,
@@ -43,6 +49,12 @@ int aes_whitebox_encrypt_cbc(const uint8_t iv[16], const uint8_t* m,
 // and iv must not overlap c. The CBC IV/authentication rules above also apply.
 int aes_whitebox_encrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* m,
     size_t len, uint8_t* c, size_t capacity, size_t* written);
+
+// CBC decryption without unpadding, with the same length, pointer, overlap,
+// IV preservation and error contracts as unpadded CBC encryption above.
+// Requires the optional inverse runtime/tables; not present in core-only builds.
+int aes_whitebox_decrypt_cbc(const uint8_t iv[16], const uint8_t* c,
+    size_t len, uint8_t* m);
 
 // Mode functions accept ordinary bytes. Exact in-place use is supported;
 // other input/output overlap is not supported. Each call starts from its IV.

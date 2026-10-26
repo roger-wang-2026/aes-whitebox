@@ -44,7 +44,7 @@ AES256_OFB_TEST_IV     = 000102030405060708090a0b0c0d0e0f
 AES256_CTR_TEST_CIPHER = 601ec313775789a5b7a7f504bbf3d228f443e3ca4d62b59aca84e990cacaf5c52b0930daa23de94ce87017ba2d84988ddfc9c58db67aada613c2dd08457941a6
 AES256_CTR_TEST_NONCE  = f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
 
-.PHONY: all test clean equivalence robustness dca-prepare dca-preflight FORCE aes128_tests aes192_tests aes256_tests
+.PHONY: all test test-decrypt clean equivalence equivalence-decrypt robustness dca-prepare dca-preflight FORCE aes128_tests aes192_tests aes256_tests
 FORCE:
 all: test
 
@@ -78,7 +78,7 @@ build/aes$(1)/tables.stamp: build/aes_whitebox_compiler Makefile $$(if $$(and $$
 build/aes$(1)/aes_whitebox_tables.cc build/aes$(1)/external_encodings.cc: | build/aes$(1)/tables.stamp
 	@test -s $$@
 
-build/aes$(1)/aes_whitebox.o: aes_whitebox.cc aes_whitebox.h build/aes$(1)/tables.stamp
+build/aes$(1)/aes_whitebox.o: aes_whitebox.cc aes_whitebox.h aes_whitebox_internal.h build/aes$(1)/tables.stamp
 	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -Ibuild/aes$(1) -MMD -MP -c $$< -o $$@
 
 build/aes$(1)/external_encodings.o: build/aes$(1)/external_encodings.cc build/aes$(1)/tables.stamp
@@ -101,9 +101,42 @@ aes$(1)_tests: build/aes$(1)/aes_tests build/aes$(1)/cbc_tests
 	./$$< ofb $$(TEST_PLAIN) $$(AES$(1)_OFB_TEST_IV) $$(AES$(1)_OFB_TEST_CIPHER)
 	./$$< ctr $$(TEST_PLAIN) $$(AES$(1)_CTR_TEST_NONCE) $$(AES$(1)_CTR_TEST_CIPHER)
 	./build/aes$(1)/cbc_tests $$(TEST_PLAIN) $$(CBC_TEST_IV) $$(AES$(1)_CBC_TEST_CIPHER)
+
+build/aes$(1)/decrypt:
+	mkdir -p $$@
+
+build/aes$(1)/decrypt/tables.stamp: build/aes_whitebox_compiler Makefile $$(if $$(and $$(wildcard build/aes$(1)/decrypt/aes_whitebox_decrypt_tables.cc),$$(wildcard build/aes$(1)/decrypt/external_encodings.cc)),,FORCE) | build/aes$(1)/decrypt
+	@if test ! -f $$@ || test build/aes_whitebox_compiler -nt $$@ || test Makefile -nt $$@ || test ! -s build/aes$(1)/decrypt/aes_whitebox_decrypt_tables.cc || test ! -s build/aes$(1)/decrypt/external_encodings.cc; then \
+	  ./build/aes_whitebox_compiler aes$(1) $$(AES$(1)_KEY) --direction decrypt --output build/aes$(1)/decrypt/aes_whitebox_decrypt_tables.cc --helpers build/aes$(1)/decrypt/external_encodings.cc && touch $$@; \
+	fi
+
+build/aes$(1)/decrypt/aes_whitebox_decrypt_tables.cc build/aes$(1)/decrypt/external_encodings.cc: | build/aes$(1)/decrypt/tables.stamp
+	@test -s $$@
+
+build/aes$(1)/decrypt/aes_whitebox_decrypt.o: aes_whitebox_decrypt.cc aes_whitebox.h aes_whitebox_internal.h build/aes$(1)/decrypt/tables.stamp
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -Ibuild/aes$(1)/decrypt -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/decrypt/external_encodings.o: build/aes$(1)/decrypt/external_encodings.cc build/aes$(1)/decrypt/tables.stamp
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/decrypt/cbc_tests.o: tests/cbc_decrypt_tests.c aes_whitebox.h hex.h aunit.h | build/aes$(1)/decrypt
+	$$(CC) $$(CPPFLAGS) $$(CFLAGS) -I. -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/decrypt/cbc_tests: build/aes$(1)/decrypt/aes_whitebox_decrypt.o build/aes$(1)/decrypt/external_encodings.o build/aes$(1)/decrypt/cbc_tests.o
+	$$(CXX) $$(LDFLAGS) $$^ -o $$@
+
+.PHONY: aes$(1)_decrypt_tests
+aes$(1)_decrypt_tests: build/aes$(1)/decrypt/cbc_tests
+	./$$< $$(TEST_PLAIN) $$(CBC_TEST_IV) $$(AES$(1)_CBC_TEST_CIPHER)
+
 endef
 
 $(foreach bits,128 192 256,$(eval $(call AES_RULES,$(bits))))
+
+test-decrypt: aes128_decrypt_tests aes192_decrypt_tests aes256_decrypt_tests
+
+equivalence-decrypt: build/aes_whitebox_compiler
+	$(PYTHON) tests/decrypt_equivalence.py
 
 robustness: build/aes_whitebox_compiler build/aes128/aes_tests
 	$(PYTHON) tests/robustness.py
@@ -121,4 +154,4 @@ clean:
 	rm -rf build
 	rm -f libaes.a
 
--include $(wildcard build/*.d build/aes*/*.d)
+-include $(wildcard build/*.d build/aes*/*.d build/aes*/decrypt/*.d)

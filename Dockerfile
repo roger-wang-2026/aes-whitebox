@@ -7,4 +7,5 @@ RUN apt-get update \
 
 WORKDIR /build
 COPY . ./
-RUN make -j3 && make equivalence
+RUN make -j3 && make equivalence \
+ && make -j3 test-decrypt && make equivalence-decrypt

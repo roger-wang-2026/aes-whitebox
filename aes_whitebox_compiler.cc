@@ -13,6 +13,7 @@
 #include <string>
 #include <utility>
 #include <stdexcept>
+#include <sstream>
 #include <NTL/ZZ.h>
 
 #include "hex.h"
@@ -167,14 +168,49 @@ void CalculateTy(uint8_t Ty[4][256][4]) {
   }
 }
 
+// Fold the initial last-round key into the first inverse S-box table.
+// Every subsequent table combines InvSubBytes and its following AddRoundKey.
+void CalculateInverseTboxes(const uint32_t roundKey[],
+    std::vector<LastTables>& tables, int Nr) {
+  uint8_t inverse_sbox[256];
+  for (int x = 0; x < 256; ++x)
+    inverse_sbox[Sbox[x >> 4][x & 15]] = x;
+  for (int r = 0; r < Nr; ++r) {
+    for (int i = 0; i < 16; ++i) {
+      int source = InvShiftRowsTab[i];
+      uint8_t initial_key = roundKey[Nr*4 + source/4] >> (24-8*(source%4));
+      uint8_t key = roundKey[(Nr-1-r)*4 + i/4] >> (24-8*(i%4));
+      for (int x = 0; x < 256; ++x)
+        tables[r][i][x] = inverse_sbox[x ^ (r == 0 ? initial_key : 0)] ^ key;
+    }
+  }
+}
+
+void CalculateInverseTy(uint8_t ty[4][256][4]) {
+  // Indices into gf_mul: 9, 11, 13, 14 are columns 2, 3, 4, 5.
+  constexpr int coefficients[4][4] = {
+    {5, 3, 4, 2}, {2, 5, 3, 4}, {4, 2, 5, 3}, {3, 4, 2, 5}
+  };
+  for (int byte = 0; byte < 4; ++byte)
+    for (int x = 0; x < 256; ++x)
+      for (int lane = 0; lane < 4; ++lane)
+        ty[byte][x][lane] = gf_mul[x][coefficients[byte][lane]];
+}
+
 void CalculateTyBoxes(uint32_t roundKey[],
     std::vector<WordTables>& Tyboxes, LastTables& TboxesLast,
-    std::vector<WordTables>& MBL, bool enableL, bool enableMB, int Nr) {
+    std::vector<WordTables>& MBL, bool enableL, bool enableMB, int Nr, bool decrypt = false) {
   std::vector<LastTables> Tboxes(Nr);
   uint8_t Ty[4][256][4];
 
-  CalculateTboxes(roundKey, Tboxes, Nr);
-  CalculateTy(Ty);
+  if (decrypt) {
+    CalculateInverseTboxes(roundKey, Tboxes, Nr);
+    CalculateInverseTy(Ty);
+  } else {
+    CalculateTboxes(roundKey, Tboxes, Nr);
+    CalculateTy(Ty);
+  }
+  const int* inverse_shift = decrypt ? ShiftRowsTab : InvShiftRowsTab;
 
   for (int r = 0; r < Nr-1; r++) {
     for (int x = 0; x < 256; x++) {
@@ -249,25 +285,25 @@ void CalculateTyBoxes(uint32_t roundKey[],
           uint32_t out2 = MBL[r][j*4 + 2][x];
           uint32_t out3 = MBL[r][j*4 + 3][x];
   
-          MBL[r][j*4 + 0][x] = (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 0]].forward, out0 >> 24) << 24)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 1]].forward, out0 >> 16) << 16)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 2]].forward, out0 >>  8) <<  8)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 3]].forward, out0 >>  0) <<  0);
+          MBL[r][j*4 + 0][x] = (mul<uint8_t>(L[r][inverse_shift[j*4 + 0]].forward, out0 >> 24) << 24)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 1]].forward, out0 >> 16) << 16)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 2]].forward, out0 >>  8) <<  8)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 3]].forward, out0 >>  0) <<  0);
   
-          MBL[r][j*4 + 1][x] = (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 0]].forward, out1 >> 24) << 24)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 1]].forward, out1 >> 16) << 16)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 2]].forward, out1 >>  8) <<  8)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 3]].forward, out1 >>  0) <<  0);
+          MBL[r][j*4 + 1][x] = (mul<uint8_t>(L[r][inverse_shift[j*4 + 0]].forward, out1 >> 24) << 24)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 1]].forward, out1 >> 16) << 16)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 2]].forward, out1 >>  8) <<  8)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 3]].forward, out1 >>  0) <<  0);
   
-          MBL[r][j*4 + 2][x] = (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 0]].forward, out2 >> 24) << 24)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 1]].forward, out2 >> 16) << 16)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 2]].forward, out2 >>  8) <<  8)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 3]].forward, out2 >>  0) <<  0);
+          MBL[r][j*4 + 2][x] = (mul<uint8_t>(L[r][inverse_shift[j*4 + 0]].forward, out2 >> 24) << 24)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 1]].forward, out2 >> 16) << 16)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 2]].forward, out2 >>  8) <<  8)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 3]].forward, out2 >>  0) <<  0);
   
-          MBL[r][j*4 + 3][x] = (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 0]].forward, out3 >> 24) << 24)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 1]].forward, out3 >> 16) << 16)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 2]].forward, out3 >>  8) <<  8)
-                             | (mul<uint8_t>(L[r][InvShiftRowsTab[j*4 + 3]].forward, out3 >>  0) <<  0);
+          MBL[r][j*4 + 3][x] = (mul<uint8_t>(L[r][inverse_shift[j*4 + 0]].forward, out3 >> 24) << 24)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 1]].forward, out3 >> 16) << 16)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 2]].forward, out3 >>  8) <<  8)
+                             | (mul<uint8_t>(L[r][inverse_shift[j*4 + 3]].forward, out3 >>  0) <<  0);
         }
       }
     }
@@ -307,14 +343,15 @@ uint8_t decode_byte(const ByteEncoding& e, uint8_t x) {
 
 // One stage consists of four 8->32 tables per column and eight XOR trees.
 void EncodeStage(WordTables& tables, XorRound& xors,
-                 const Boundary& input, const Boundary& output, bool shift) {
+                 const Boundary& input, const Boundary& output, bool shift, bool decrypt = false) {
+  const int* rows = decrypt ? InvShiftRowsTab : ShiftRowsTab;
   for (int col = 0; col < 4; ++col) {
     std::array<std::array<Encoding, 8>, 4> leaves;
     for (int lane = 0; lane < 4; ++lane) {
       const int pos = col * 4 + lane;
       auto old = tables[pos];
       for (int x = 0; x < 256; ++x) {
-        uint32_t word = old[decode_byte(input[shift ? ShiftRowsTab[pos] : pos], x)];
+        uint32_t word = old[decode_byte(input[shift ? rows[pos] : pos], x)];
         uint32_t encoded = 0;
         for (int n = 0; n < 8; ++n)
           encoded |= uint32_t(leaves[lane][n].forward[(word >> (28-4*n)) & 15]) << (28-4*n);
@@ -404,13 +441,13 @@ class AtomicOutput {
   FILE* file_;
 };
 
-void EmitHelpers(FILE* out, const Boundary& input, const Boundary& output) {
+void EmitHelpers(FILE* out, const Boundary& input, const Boundary& output, bool decrypt) {
   checked_print(out, "// Generated external encoding adapters; keep outside the core.\n"
                      "#include <stdint.h>\nextern \"C\" {\n");
   for (int kind = 0; kind < 2; ++kind) {
-    checked_print(out, "void aes_whitebox_%s_block(const uint8_t in[16], uint8_t out[16]) {\n"
+    checked_print(out, "void aes_whitebox_%s%s_block(const uint8_t in[16], uint8_t out[16]) {\n"
                        "static const uint8_t map[16][256] = ",
-                       kind == 0 ? "encode_input" : "decode_output");
+                       decrypt ? "decrypt_" : "", kind == 0 ? "encode_input" : "decode_output");
     std::array<std::array<uint8_t, 256>, 16> map;
     for (int i = 0; i < 16; ++i)
       for (int x = 0; x < 256; ++x)
@@ -424,7 +461,7 @@ void EmitHelpers(FILE* out, const Boundary& input, const Boundary& output) {
 }
 
 void GenerateTables(const char* hexKey, int Nk, int Nr,
-                    const std::string& path, const std::string& helpers) {
+                    const std::string& path, const std::string& helpers, bool decrypt = false) {
   std::vector<uint8_t> key(Nk*4);
   std::vector<uint32_t> roundKey((Nr+1)*4);
   read_key(hexKey, key.data(), key.size());
@@ -432,21 +469,22 @@ void GenerateTables(const char* hexKey, int Nk, int Nr,
 
   std::vector<WordTables> ty(Nr-1), mbl(Nr-1);
   LastTables last;
-  CalculateTyBoxes(roundKey.data(), ty, last, mbl, true, true, Nr);
+  CalculateTyBoxes(roundKey.data(), ty, last, mbl, true, true, Nr, decrypt);
   Boundary external_input, external_output;
   Boundary previous = external_input;
   std::vector<XorRound> xor_ty(Nr-1), xor_mbl(Nr-1);
   for (int r = 0; r < Nr-1; ++r) {
     Boundary middle, next;
-    EncodeStage(ty[r], xor_ty[r], previous, middle, true);
-    EncodeStage(mbl[r], xor_mbl[r], middle, next, false);
+    EncodeStage(ty[r], xor_ty[r], previous, middle, true, decrypt);
+    EncodeStage(mbl[r], xor_mbl[r], middle, next, false, decrypt);
     previous = next;
   }
+  const int* rows = decrypt ? InvShiftRowsTab : ShiftRowsTab;
   for (int i = 0; i < 16; ++i) {
     auto old = last[i];
     for (int x = 0; x < 256; ++x)
       last[i][x] = encode_byte(external_output[i],
-          old[decode_byte(previous[ShiftRowsTab[i]], x)]);
+          old[decode_byte(previous[rows[i]], x)]);
   }
   AtomicOutput tables_file(path), helpers_file(helpers);
   FILE* out = tables_file.get();
@@ -464,7 +502,7 @@ void GenerateTables(const char* hexKey, int Nk, int Nr,
   checked_print(out, "constexpr uint8_t XorMBL[%d][96][16][16] = ", Nr-1);
   Emit(out, xor_mbl);
   checked_print(out, "}\n");
-  EmitHelpers(helpers_file.get(), external_input, external_output);
+  EmitHelpers(helpers_file.get(), external_input, external_output, decrypt);
   tables_file.finish();
   helpers_file.finish();
   // Each file is atomically replaced; this is not a two-file transaction.
@@ -485,7 +523,9 @@ std::string CanonicalOutput(const std::string& path) {
 
 void syntax() {
   err_quit("Syntax: aes_whitebox_compiler <aes128|aes192|aes256|aes512|aes1024|aes2048|aes4096> "
-           "<hex-key> [--seed <decimal>] [--output <tables.cc>] [--helpers <adapters.cc>]");
+           "<hex-key> [--seed <decimal>] [--direction encrypt|decrypt|both] "
+           "[--output <tables.cc>] [--helpers <adapters.cc>] "
+           "[--decrypt-output <tables.cc>] [--decrypt-helpers <adapters.cc>]");
 }
 
 }  // namespace
@@ -498,26 +538,63 @@ int main(int argc, char* argv[]) {
     for (int bits : sizes)
       if (std::string(argv[1]) == "aes" + std::to_string(bits)) Nk = bits / 32;
     if (!Nk) syntax();
-    std::string output = "aes_whitebox_tables.cc";
-    std::string helpers;
+    std::string output, helpers, decrypt_output, decrypt_helpers;
+    std::string direction = "encrypt";
     bool seeded = false;
+    NTL::ZZ seed;
     for (int i = 3; i < argc; i += 2) {
       if (i + 1 >= argc) syntax();
       std::string option(argv[i]), value(argv[i+1]);
+      if (value.empty() && option != "--seed") err_quit("Option %s requires a nonempty value", option.c_str());
       if (option == "--seed") {
         if (seeded || value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
           err_quit("Seed must be a nonnegative decimal integer, specified once");
-        NTL::SetSeed(NTL::to_ZZ(value.c_str()));
+        seed = NTL::to_ZZ(value.c_str());
+        NTL::SetSeed(seed);
         seeded = true;
       } else if (option == "--output") output = value;
       else if (option == "--helpers") helpers = value;
+      else if (option == "--direction") direction = value;
+      else if (option == "--decrypt-output") decrypt_output = value;
+      else if (option == "--decrypt-helpers") decrypt_helpers = value;
       else syntax();
     }
+    if (direction != "encrypt" && direction != "decrypt" && direction != "both") syntax();
+    if (direction != "encrypt" && Nk > 8)
+      err_quit("Decryption supports only standard AES-128/192/256");
+    if (direction != "both" && (!decrypt_output.empty() || !decrypt_helpers.empty()))
+      err_quit("--decrypt-output and --decrypt-helpers require --direction both");
+    if (output.empty()) output = direction == "decrypt" ? "aes_whitebox_decrypt_tables.cc" : "aes_whitebox_tables.cc";
     if (helpers.empty()) helpers = output + ".helpers.cc";
     output = CanonicalOutput(output);
     helpers = CanonicalOutput(helpers);
-    if (output == helpers) err_quit("Table and helper output paths must differ");
-    GenerateTables(argv[2], Nk, Nk+6, output, helpers);
+    std::vector<std::string> destinations = {output, helpers};
+    if (direction == "both") {
+      if (decrypt_output.empty())
+        decrypt_output = output.substr(0, output.find_last_of('/')+1) + "aes_whitebox_decrypt_tables.cc";
+      if (decrypt_helpers.empty()) decrypt_helpers = decrypt_output + ".helpers.cc";
+      decrypt_output = CanonicalOutput(decrypt_output);
+      decrypt_helpers = CanonicalOutput(decrypt_helpers);
+      destinations.push_back(decrypt_output);
+      destinations.push_back(decrypt_helpers);
+    }
+    for (size_t i = 0; i < destinations.size(); ++i)
+      for (size_t j = 0; j < i; ++j)
+        if (destinations[i] == destinations[j]) err_quit("Generated output paths must differ");
+    if (direction != "decrypt") GenerateTables(argv[2], Nk, Nk+6, output, helpers);
+    if (direction != "encrypt") {
+      // Keep the existing encryption random stream unchanged; a separate seed
+      // domain makes decryption reproducible in decrypt-only and both modes.
+      if (seeded) {
+        std::ostringstream domain;
+        domain << "aes-whitebox/decrypt/" << seed;
+        const std::string bytes = domain.str();
+        NTL::SetSeed(reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size());
+      }
+      GenerateTables(argv[2], Nk, Nk+6,
+                     direction == "decrypt" ? output : decrypt_output,
+                     direction == "decrypt" ? helpers : decrypt_helpers, true);
+    }
   } catch (const std::exception& error) {
     fprintf(stderr, "Generation failed: %s\n", error.what());
     return 1;

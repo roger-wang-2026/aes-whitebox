@@ -3,9 +3,11 @@
 A research implementation of table-based white-box AES, based on
 [Chow et al.](https://www.cs.colorado.edu/~jrblack/class/csci7000/s03/project/oorschot-whitebox.pdf)
 and [Muir's tutorial](https://eprint.iacr.org/2013/104.pdf).
-AES-128/192/256 are checked against NIST SP 800-38A vectors and an independent
+Encryption and optional decryption for AES-128/192/256 are checked against
+NIST SP 800-38A vectors and an independent
 OpenSSL oracle. Experimental 512/1024/2048/4096-bit key variants remain available
-in the generator; they are not standard AES and are not covered by those tests.
+in the encryption generator; they are not standard AES and are not covered by
+those tests. Decryption rejects these experimental key lengths.
 
 The generator combines keyed T-boxes with random invertible L and MB matrices.
 Both Ty and MBL stages have separate XOR networks. Every internal nibble edge
@@ -26,6 +28,9 @@ macOS with Homebrew:
 brew install ntl
 make -j3
 make equivalence
+# Optional inverse core and CBC decryption:
+make -j3 test-decrypt
+make equivalence-decrypt
 ```
 
 Ubuntu/Debian:
@@ -35,12 +40,17 @@ sudo apt-get update
 sudo apt-get install build-essential libntl-dev libgmp-dev python3 openssl
 make -j3
 make equivalence
+# Optional inverse core and CBC decryption:
+make -j3 test-decrypt
+make equivalence-decrypt
 ```
 
 The Makefile discovers Homebrew prefixes. Override `NTL_PREFIX`, `GMP_PREFIX`,
 `CPPFLAGS`, or `LDFLAGS` for other installations. Each key size has independent
 outputs in `build/aes128/`, `build/aes192/`, or `build/aes256/`; parallel builds
-are supported. `make` runs the tests on every invocation. Generated dependency
+are supported. Optional inverse outputs live in each key directory's `decrypt/`
+subdirectory. Default `make` builds/tests only encryption. `make test-decrypt`
+builds/tests decryption independently. Test targets run on every invocation. Generated dependency
 files track included headers and tables.
 
 `make test` runs NIST vectors, boundary lengths (including 0/15/16/17/33 bytes),
@@ -84,7 +94,8 @@ The Makefile serializes generation and compilation for each pair.
 ### Ordinary-byte mode API
 
 Compile `aes_whitebox.cc` with the generated directory on the include path,
-and link the matching `external_encodings.cc`:
+and link the matching `external_encodings.cc`. The private shared header
+`aes_whitebox_internal.h` must accompany both runtime source files:
 
 ```sh
 c++ -std=c++11 -Ibuild/custom -c aes_whitebox.cc -o build/custom/aes_whitebox.o
@@ -132,7 +143,7 @@ nonempty message, IV, input, and output must all be non-null. Errors are returne
 before any output is written. Zero length returns success without accessing any
 pointer, so `aes_whitebox_encrypt_cbc(NULL, NULL, 0, NULL)` is valid.
 
-CBC decryption is not implemented. CBC encryption functions are omitted from
+CBC encryption functions are omitted from
 `AES_WHITEBOX_CORE_ONLY` builds, as are the other ordinary-byte mode wrappers.
 
 ### CBC encryption with PKCS#7 padding
@@ -162,6 +173,75 @@ padded result. Other buffer overlap is unsupported, the IV must not overlap
 output, and `written` must not overlap any input/output/IV buffer. The same IV,
 per-call chaining, and authentication limitations as raw CBC apply. The function
 uses the existing encryption tables and does not allocate memory dynamically.
+
+### Optional inverse white-box core and CBC decryption
+
+Generate only decryption tables (standard AES-128/192/256):
+
+```sh
+mkdir -p build/custom-decrypt
+./build/aes_whitebox_compiler aes128 2b7e151628aed2a6abf7158809cf4f3c \
+  --seed 42 --direction decrypt \
+  --output build/custom-decrypt/aes_whitebox_decrypt_tables.cc \
+  --helpers build/custom-decrypt/external_encodings.cc
+c++ -std=c++11 -Ibuild/custom-decrypt -c aes_whitebox_decrypt.cc -o build/custom-decrypt/core.o
+c++ -std=c++11 -c build/custom-decrypt/external_encodings.cc -o build/custom-decrypt/helpers.o
+```
+
+Link these two objects for a standalone inverse runtime; `aes_whitebox.cc` and
+its encryption tables are not needed. The public ordinary-byte API is:
+
+```c
+int aes_whitebox_decrypt_cbc(const uint8_t iv[16], const uint8_t* c,
+    size_t len, uint8_t* m);
+```
+
+It decrypts full blocks without removing padding. Output capacity must be at
+least `len`. The zero-length, status, IV preservation, invalid-argument and
+in-place contracts match unpadded CBC encryption. It saves each ciphertext block
+before writing plaintext, so exact in-place decryption preserves the feedback
+chain. PKCS#7 decryption/unpadding is not implemented.
+
+For externally encoded integration, the matching helpers and inverse core are:
+
+```c
+void aes_whitebox_decrypt_encode_input_block(const uint8_t in[16], uint8_t out[16]);
+void aes_whitebox_decrypt_encoded_block(const uint8_t in[16], uint8_t out[16]);
+void aes_whitebox_decrypt_decode_output_block(const uint8_t in[16], uint8_t out[16]);
+```
+
+Their composition equals standard AES decryption. Compile the inverse runtime
+with `-DAES_WHITEBOX_CORE_ONLY` to exclude the ordinary-byte CBC wrapper and link
+without the inverse helper object. Each direction has its own external mappings;
+encryption helpers cannot be used for decryption.
+
+`--direction encrypt` is the default and retains the existing output format and
+seeded encryption artifacts. `--direction both` writes the ordinary encryption
+pair plus `aes_whitebox_decrypt_tables.cc` beside the encryption table file and
+its `.helpers.cc` companion. With `both`, override the additional pair using
+`--decrypt-output` and `--decrypt-helpers`; `--output` and `--helpers` still refer
+to encryption. In `decrypt` mode they refer to decryption. With no path options,
+`decrypt` uses `aes_whitebox_decrypt_tables.cc` and its `.helpers.cc` companion.
+All destinations must be distinct. Each file is replaced atomically, but multiple
+pairs are not published as a transaction; distribute matching artifacts together.
+
+Explicit seeds use a separate decryption seed domain, so a given numeric seed
+produces identical inverse artifacts in `decrypt` and `both` modes. The
+previous encryption random stream is preserved. The same toolchain/NTL-version
+reproducibility limits apply as for encryption.
+
+The inverse generator folds the last round key into the first inverse S-box
+lookup, then combines inverse substitution and round-key addition before inverse
+column mixing. It uses the same L/MB protections and independently encoded XOR
+networks, with inverse row permutations applied at all table boundaries. Keys
+and inverse S-box construction stay in the generator; the deployed runtime
+contains generated tables and no ordinary key schedule.
+
+`make equivalence-decrypt` compares arbitrary ciphertexts directly against
+OpenSSL decryption for three seeds and all standard key sizes. It checks
+isolated inverse, combined, and core-only builds, raw CBC, exact in-place
+operation, output bounds, seed replay and encryption artifact compatibility.
+`make test-decrypt` adds the NIST CBC vectors and invalid-input checks.
 
 ### Externally encoded core
 
@@ -203,6 +283,10 @@ Separate Ty and MBL XOR networks increase storage compared to the original code.
 | Last round | 4,096 | 4,096 | 4,096 |
 | Core total | 741,376 | 905,216 | 1,069,056 |
 | External helper mappings | 8,192 | 8,192 | 8,192 |
+
+The optional inverse direction has the same table shapes and raw storage sizes.
+Linking both directions doubles these table totals; encryption-only builds carry
+no inverse tables. This storage statement excludes executable alignment and code.
 
 `aes.cc`, `aes.h`, and `aes_private.h` also provide the original reference AES
 implementation, which is not required by the generated runtime.

@@ -25,8 +25,10 @@ def buffer(data):
     return (U8 * len(data)).from_buffer_copy(data)
 
 
-def oracle(bits, key, data, mode="ecb", iv=None, padded=False):
+def oracle(bits, key, data, mode="ecb", iv=None, padded=False, decrypt=False):
     args = ["openssl", "enc", f"-aes-{bits}-{mode}", "-K", key.hex(), "-nosalt"]
+    if decrypt:
+        args += ["-d"]
     if not padded:
         args += ["-nopad"]
     if iv is not None:
@@ -143,6 +145,8 @@ def main():
                 if index == 0:
                     assert generate(bits, key, seed, directory) == digest, "seed replay changed artifacts"
                 lib = compile_library(directory)
+                assert not hasattr(lib, "aes_whitebox_decrypt_encoded_block")
+                assert not hasattr(lib, "aes_whitebox_decrypt_cbc")
                 core = compile_library(directory, core_only=True) if index == 0 else lib
                 if index == 0:
                     assert not hasattr(core, "aes_whitebox_encode_input_block")

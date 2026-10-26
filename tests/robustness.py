@@ -28,6 +28,15 @@ with tempfile.TemporaryDirectory(prefix="robustness-", dir=ROOT / "build") as te
         assert not table.exists() and not helper.exists()
     for seed in ["", "-1", "0x12", "1x"]:
         reject([GEN, "aes128", KEY, "--seed", seed])
+    for option in ("--output", "--helpers", "--decrypt-output", "--decrypt-helpers"):
+        reject([GEN, "aes128", KEY, *options, option, ""])
+    for direction in ("", "invalid"):
+        reject([GEN, "aes128", KEY, *options, "--direction", direction])
+    reject([GEN, "aes512", "00"*64, *options, "--direction", "decrypt"])
+    reject([GEN, "aes128", KEY, *options, "--decrypt-output", table])
+    reject([GEN, "aes128", KEY, *options, "--direction", "both", "--decrypt-output", table])
+    reject([GEN, "aes128", KEY, *options, "--direction", "both", "--decrypt-helpers", helper])
+    assert not table.exists() and not helper.exists()
     reject([GEN])
     reject([GEN, "aes128", KEY, "--output", directory / "missing/tables.cc"])
     reject([GEN, "aes128", KEY, "--output", table, "--helpers", table])

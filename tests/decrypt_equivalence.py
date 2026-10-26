@@ -7,9 +7,10 @@ from pathlib import Path
 import random
 import shlex
 import sys
+import subprocess
 import tempfile
 
-from equivalence import ROOT, GEN, PTR, U8, block, buffer, oracle, run, generate
+from equivalence import ROOT, GEN, PTR, U8, block, buffer, oracle, run, generate, pkcs7_call
 
 
 def digest(path):
@@ -64,6 +65,34 @@ def decrypt_cbc(lib, iv, data, in_place):
     return bytes(storage)[1:len(data)+1]
 
 
+def decrypt_pkcs7(lib, iv, ciphertext, expected, in_place, error=None, capacity=None):
+    function = lib.aes_whitebox_decrypt_cbc_pkcs7
+    function.argtypes = [PTR, PTR, ctypes.c_size_t, PTR, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    function.restype = ctypes.c_int
+    if capacity is None:
+        capacity = len(ciphertext) if error else len(expected)
+    allocated = max(capacity, len(ciphertext) if in_place else 0)
+    storage = (U8 * (allocated+2))(*([0xa5] * (allocated+2)))
+    output = ctypes.cast(ctypes.byref(storage, 1), PTR)
+    source = buffer(ciphertext)
+    if in_place:
+        ctypes.memmove(output, source, len(ciphertext))
+    snapshot = bytes(storage)
+    iv_buffer = buffer(iv)
+    written = ctypes.c_size_t(123)
+    status = function(iv_buffer, output if in_place else source, len(ciphertext),
+                      output, capacity, ctypes.byref(written))
+    if error:
+        assert status == error, (status, error)
+        assert bytes(storage) == snapshot and written.value == 123
+    else:
+        assert status == 0 and written.value == len(expected)
+        assert bytes(storage)[1:len(expected)+1] == expected
+        assert storage[0] == 0xa5
+        assert bytes(storage)[len(expected)+1:] == snapshot[len(expected)+1:]
+    assert bytes(source) == ciphertext and bytes(iv_buffer) == iv
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", default="1,2,3")
@@ -73,7 +102,7 @@ def main():
     if len(seeds) < 2 or len(set(seeds)) != len(seeds) or args.blocks < 1:
         parser.error("use at least two distinct seeds and a positive block count")
     rng = random.Random(20261027)
-    blocks = cbc_checks = 0
+    blocks = cbc_checks = pkcs7_checks = rejection_checks = 0
     with tempfile.TemporaryDirectory(prefix="inverse-", dir=ROOT / "build") as temp:
         base = Path(temp)
         for bits in (128, 192, 256):
@@ -105,6 +134,7 @@ def main():
                 if index == 0:
                     assert not hasattr(core, "aes_whitebox_decrypt_encode_input_block")
                     assert not hasattr(core, "aes_whitebox_decrypt_cbc")
+                    assert not hasattr(core, "aes_whitebox_decrypt_cbc_pkcs7")
                 for offset in range(0, len(ciphertext), 16):
                     value = ciphertext[offset:offset+16]
                     encoded = block(inverse, "decrypt_encode_input", value)
@@ -126,8 +156,43 @@ def main():
                             for binary in (lib, inverse):
                                 assert decrypt_cbc(binary, iv, value, in_place) == expected_cbc
                                 cbc_checks += 1
-                print(f"AES-{bits}, seed {seed}: inverse core/CBC OpenSSL equivalence and direction compatibility passed", flush=True)
-    print(f"Inverse equivalence: {blocks} blocks, {cbc_checks} CBC checks; isolated/both/core-only builds and seed replay passed")
+                for iv in (bytes(16), bytes(rng.randrange(256) for _ in range(16))):
+                    for length in (*range(65), 127, 128, 129, 255, 256, 257, 1023, 1024):
+                        plain = ciphertext[:length]
+                        encrypted = oracle(bits, key, plain, "cbc", iv, padded=True)
+                        assert pkcs7_call(lib, iv, plain, in_place=bool(length % 2)) == encrypted
+                        expected_plain = oracle(bits, key, encrypted, "cbc", iv, padded=True, decrypt=True)
+                        assert expected_plain == plain
+                        for in_place in (False, True):
+                            for binary in (lib, inverse):
+                                decrypt_pkcs7(binary, iv, encrypted, expected_plain, in_place)
+                                pkcs7_checks += 1
+                                if length:
+                                    decrypt_pkcs7(binary, iv, encrypted, expected_plain, in_place,
+                                                  error=-3, capacity=length-1)
+                                    rejection_checks += 1
+                    malformed = [bytes(15)+bytes([value]) for value in (0, 17, 255)]
+                    # Corrupt every byte of a full padding block, including the pad length.
+                    for j in range(16):
+                        tail = bytearray([16]*16)
+                        tail[j] = 0 if j == 15 else 17
+                        malformed.append(bytes(tail))
+                    malformed += [bytes([3])*15 + bytes([4]), bytes(12)+bytes([5, 4, 4, 4])]
+                    for tail in malformed:
+                        # Encrypt malformed multi-block padding with OpenSSL, not our encoder.
+                        encrypted = oracle(bits, key, ciphertext[:32]+tail, "cbc", iv)
+                        try:
+                            oracle(bits, key, encrypted, "cbc", iv, padded=True, decrypt=True)
+                        except subprocess.CalledProcessError:
+                            pass
+                        else:
+                            raise AssertionError("malformed fixture was accepted by OpenSSL")
+                        for in_place in (False, True):
+                            for binary in (lib, inverse):
+                                decrypt_pkcs7(binary, iv, encrypted, b"", in_place, error=-4)
+                                rejection_checks += 1
+                print(f"AES-{bits}, seed {seed}: inverse CBC/PKCS7 OpenSSL equivalence and rejection checks passed", flush=True)
+    print(f"Inverse equivalence: {blocks} blocks, {cbc_checks} CBC checks, {pkcs7_checks} PKCS7 checks, {rejection_checks} rejection checks; isolated/both/core-only builds and seed replay passed")
 
 
 if __name__ == "__main__":

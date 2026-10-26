@@ -28,7 +28,8 @@ enum aes_whitebox_status {
   AES_WHITEBOX_OK = 0,
   AES_WHITEBOX_INVALID_LENGTH = -1,
   AES_WHITEBOX_INVALID_ARGUMENT = -2,
-  AES_WHITEBOX_INSUFFICIENT_CAPACITY = -3
+  AES_WHITEBOX_INSUFFICIENT_CAPACITY = -3,
+  AES_WHITEBOX_INVALID_PADDING = -4
 };
 
 // CBC encryption without padding: len must be a multiple of 16 and c must
@@ -55,6 +56,16 @@ int aes_whitebox_encrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* m,
 // Requires the optional inverse runtime/tables; not present in core-only builds.
 int aes_whitebox_decrypt_cbc(const uint8_t iv[16], const uint8_t* c,
     size_t len, uint8_t* m);
+
+// CBC decryption with strict PKCS#7 unpadding. len must be a nonzero multiple
+// of 16; iv, c, m and written must be non-null (also for an empty plaintext).
+// capacity need only cover the unpadded plaintext; success sets *written to
+// that length. Every failure leaves m and *written unchanged. Exact in-place
+// use is supported; other overlap is unsupported. written must not overlap
+// buffers, and iv must not overlap m. Scans the entire final block for padding
+// validation; this is not a constant-time or authentication guarantee.
+int aes_whitebox_decrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* c,
+    size_t len, uint8_t* m, size_t capacity, size_t* written);
 
 // Mode functions accept ordinary bytes. Exact in-place use is supported;
 // other input/output overlap is not supported. Each call starts from its IV.

@@ -200,7 +200,37 @@ It decrypts full blocks without removing padding. Output capacity must be at
 least `len`. The zero-length, status, IV preservation, invalid-argument and
 in-place contracts match unpadded CBC encryption. It saves each ciphertext block
 before writing plaintext, so exact in-place decryption preserves the feedback
-chain. PKCS#7 decryption/unpadding is not implemented.
+chain.
+
+PKCS#7 decryption/unpadding is available through:
+
+```c
+int aes_whitebox_decrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* c,
+    size_t len, uint8_t* m, size_t capacity, size_t* written);
+```
+
+The ciphertext must contain at least one block and its length must be a multiple
+of 16. IV, ciphertext, plaintext output and `written` must all be non-null,
+including when the decoded plaintext is empty. Capacity need only cover the
+actual unpadded plaintext, not the ciphertext length. An encrypted empty message
+therefore succeeds with capacity zero and a non-null output pointer.
+
+The function decrypts the final block into a local buffer and validates every
+claimed padding byte, scanning all sixteen positions without returning at the
+first mismatch. Padding must consist of 1..16 copies of its length; invalid
+padding returns `AES_WHITEBOX_INVALID_PADDING` (-4). Only after validation and
+the capacity check does it decrypt the preceding blocks and write the final
+unpadded bytes. Every failure preserves the output buffer and `*written`,
+including exact in-place calls. Success sets `*written` to the plaintext length
+and writes only that many bytes. Unused bytes, including an in-place ciphertext
+tail, are not cleared.
+
+Exact in-place operation is supported; other overlap is unsupported. `written`
+must not overlap any buffer, and the IV must not overlap output. No dynamic
+allocation is used. The fixed validation loop is not a guarantee that the whole
+implementation runs in constant time. Padding validity is not authentication;
+the same CBC authentication limitations apply, and detailed padding errors
+must not be treated as an authenticated protocol response.
 
 For externally encoded integration, the matching helpers and inverse core are:
 
@@ -241,6 +271,10 @@ contains generated tables and no ordinary key schedule.
 OpenSSL decryption for three seeds and all standard key sizes. It checks
 isolated inverse, combined, and core-only builds, raw CBC, exact in-place
 operation, output bounds, seed replay and encryption artifact compatibility.
+PKCS#7 checks cover every input length from 0 through 64 and larger boundary
+lengths, exact plaintext capacity, malformed multi-block padding, and unchanged
+output/length on failure. Malformed fixtures are independently rejected by
+OpenSSL.
 `make test-decrypt` adds the NIST CBC vectors and invalid-input checks.
 
 ### Externally encoded core

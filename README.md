@@ -47,9 +47,11 @@ files track included headers and tables.
 exact in-place encryption/decryption, output bounds, invalid CLI/hex input, and
 output-file error handling. CBC encryption also has AES-128/192/256 NIST vectors,
 full-block prefixes, invalid lengths/null arguments, and in-place/bounds tests.
+PKCS#7 tests cover every length from 0 through 64, padded output capacity,
+size overflow, and failure preservation.
 `make equivalence` checks three seeds for each
 standard key size against OpenSSL, including encoded-core integration,
-CFB/OFB/CTR, CBC encryption, counter carry, deterministic replay, and a core-only build.
+CFB/OFB/CTR, raw and PKCS#7 CBC encryption, counter carry, deterministic replay, and a core-only build.
 To increase the number of generated implementations:
 
 ```sh
@@ -130,8 +132,36 @@ nonempty message, IV, input, and output must all be non-null. Errors are returne
 before any output is written. Zero length returns success without accessing any
 pointer, so `aes_whitebox_encrypt_cbc(NULL, NULL, 0, NULL)` is valid.
 
-CBC decryption and PKCS#7 padding are not implemented. The function is omitted
-from `AES_WHITEBOX_CORE_ONLY` builds, as are the other ordinary-byte mode wrappers.
+CBC decryption is not implemented. CBC encryption functions are omitted from
+`AES_WHITEBOX_CORE_ONLY` builds, as are the other ordinary-byte mode wrappers.
+
+### CBC encryption with PKCS#7 padding
+
+```c
+int aes_whitebox_encrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* m,
+    size_t len, uint8_t* c, size_t capacity, size_t* written);
+```
+
+This function accepts arbitrary byte lengths. Padding consists of 1..16 copies
+of the padding length. An empty message becomes one encrypted padding block;
+block-aligned input always gets an extra block. The output size is
+`len + (16 - len % 16)`. The implementation checks this addition for overflow
+before reading input or writing output, returning `AES_WHITEBOX_INVALID_LENGTH`
+if it cannot be represented by `size_t`.
+
+Supply an output buffer with at least that capacity and a non-null `written`
+pointer. On success, `*written` receives the ciphertext length. Insufficient
+capacity returns `AES_WHITEBOX_INSUFFICIENT_CAPACITY` (-3). Other null arguments
+return `AES_WHITEBOX_INVALID_ARGUMENT`; only the plaintext may be null when
+`len == 0`. Empty input still requires a valid IV and a 16-byte output buffer.
+There is no null-output size-query mode. On every error, both the output buffer
+and `*written` are unchanged.
+
+Exact in-place operation is supported when the allocation has room for the
+padded result. Other buffer overlap is unsupported, the IV must not overlap
+output, and `written` must not overlap any input/output/IV buffer. The same IV,
+per-call chaining, and authentication limitations as raw CBC apply. The function
+uses the existing encryption tables and does not allocate memory dynamically.
 
 ### Externally encoded core
 

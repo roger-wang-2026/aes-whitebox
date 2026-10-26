@@ -62,5 +62,65 @@ au_main
   au_eq("CBC rejects invalid in-place length", aes_whitebox_encrypt_cbc(iv, storage+1, 17, storage+1), AES_WHITEBOX_INVALID_LENGTH);
   au_eq("CBC failure preserves in-place data", memcmp(storage, snapshot, sizeof(storage)), 0);
   au_eq("CBC failures preserve IV", memcmp(iv, saved_iv, sizeof(iv)), 0);
+  // Explicit padding followed by the independently tested raw CBC API.
+  uint8_t padded[80], padded_cipher[80], padded_storage[82], padded_snapshot[82];
+  for (size_t len = 0; len <= sizeof(plain); ++len) {
+    size_t required = (len / 16 + 1) * 16;
+    memcpy(padded, plain, len);
+    memset(padded+len, (int)(required-len), required-len);
+    int status = aes_whitebox_encrypt_cbc(iv, padded, required, padded_cipher);
+    au_eq("Explicit padding CBC", status, AES_WHITEBOX_OK);
+    for (int in_place = 0; in_place < 2; ++in_place) {
+      memset(padded_storage, 0xa5, sizeof(padded_storage));
+      if (in_place) memcpy(padded_storage+1, plain, len);
+      const uint8_t* input = in_place ? padded_storage+1 : (len ? plain : NULL);
+      size_t written = SIZE_MAX;
+      status = aes_whitebox_encrypt_cbc_pkcs7(iv, input, len, padded_storage+1, required, &written);
+      au_eq("PKCS7 success", status, AES_WHITEBOX_OK);
+      au_assert("PKCS7 written length", written == required);
+      au_eq("PKCS7 padded result", memcmp(padded_storage+1, padded_cipher, required), 0);
+      au_eq("PKCS7 leading guard", padded_storage[0], 0xa5);
+      au_assert("PKCS7 trailing guard", is_guard(padded_storage+required+1, sizeof(padded_storage)-required-1));
+    }
+    memset(padded_storage, 0xa5, sizeof(padded_storage));
+    memcpy(padded_snapshot, padded_storage, sizeof(padded_storage));
+    size_t written = 123;
+    status = aes_whitebox_encrypt_cbc_pkcs7(iv, plain, len, padded_storage+1, required-1, &written);
+    au_eq("PKCS7 insufficient capacity", status, AES_WHITEBOX_INSUFFICIENT_CAPACITY);
+    au_eq("PKCS7 failure preserves output", memcmp(padded_storage, padded_snapshot, sizeof(padded_storage)), 0);
+    au_assert("PKCS7 failure preserves written", written == 123);
+  }
+  size_t written = 123;
+  int status;
+  const size_t overflow_lengths[] = {SIZE_MAX, SIZE_MAX-1, SIZE_MAX-15};
+  for (size_t i = 0; i < sizeof(overflow_lengths)/sizeof(overflow_lengths[0]); ++i) {
+    status = aes_whitebox_encrypt_cbc_pkcs7(iv, plain, overflow_lengths[i], padded_storage+1, SIZE_MAX, &written);
+    au_eq("PKCS7 rejects length overflow", status, AES_WHITEBOX_INVALID_LENGTH);
+    au_eq("PKCS7 overflow preserves output", memcmp(padded_storage, padded_snapshot, sizeof(padded_storage)), 0);
+    au_assert("PKCS7 overflow preserves written", written == 123);
+  }
+  // Largest non-overflowing padded size: must reject capacity before reading input.
+  status = aes_whitebox_encrypt_cbc_pkcs7(iv, plain, SIZE_MAX-16, padded_storage+1, 80, &written);
+  au_eq("PKCS7 near-limit capacity", status, AES_WHITEBOX_INSUFFICIENT_CAPACITY);
+  status = aes_whitebox_encrypt_cbc_pkcs7(NULL, plain, 1, padded_storage+1, 80, &written);
+  au_eq("PKCS7 null IV", status, AES_WHITEBOX_INVALID_ARGUMENT);
+  status = aes_whitebox_encrypt_cbc_pkcs7(iv, NULL, 1, padded_storage+1, 80, &written);
+  au_eq("PKCS7 null nonempty input", status, AES_WHITEBOX_INVALID_ARGUMENT);
+  status = aes_whitebox_encrypt_cbc_pkcs7(iv, plain, 1, NULL, 80, &written);
+  au_eq("PKCS7 null output", status, AES_WHITEBOX_INVALID_ARGUMENT);
+  status = aes_whitebox_encrypt_cbc_pkcs7(iv, plain, 1, padded_storage+1, 80, NULL);
+  au_eq("PKCS7 null written", status, AES_WHITEBOX_INVALID_ARGUMENT);
+  status = aes_whitebox_encrypt_cbc_pkcs7(NULL, NULL, 0, NULL, 0, NULL);
+  au_eq("PKCS7 empty input still requires output and IV", status, AES_WHITEBOX_INVALID_ARGUMENT);
+  au_eq("PKCS7 argument failures preserve output", memcmp(padded_storage, padded_snapshot, sizeof(padded_storage)), 0);
+  au_assert("PKCS7 argument failures preserve written", written == 123);
+  memcpy(padded_storage+1, plain, sizeof(plain));
+  memcpy(padded_snapshot, padded_storage, sizeof(padded_storage));
+  status = aes_whitebox_encrypt_cbc_pkcs7(iv, padded_storage+1, 64, padded_storage+1, 64, &written);
+  au_eq("PKCS7 in-place needs padding capacity", status, AES_WHITEBOX_INSUFFICIENT_CAPACITY);
+  au_eq("PKCS7 failed in-place preserves input", memcmp(padded_storage, padded_snapshot, sizeof(padded_storage)), 0);
+  au_eq("PKCS7 preserves original plaintext", memcmp(plain, saved_plain, sizeof(plain)), 0);
+  au_eq("PKCS7 preserves IV", memcmp(iv, saved_iv, sizeof(iv)), 0);
+
 }
 au_endmain

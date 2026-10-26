@@ -99,6 +99,31 @@ int aes_whitebox_encrypt_cbc(const uint8_t iv[16], const uint8_t* m,
   return AES_WHITEBOX_OK;
 }
 
+int aes_whitebox_encrypt_cbc_pkcs7(const uint8_t iv[16], const uint8_t* m,
+    size_t len, uint8_t* c, size_t capacity, size_t* written) {
+  const uint8_t padding = 16 - len % 16;
+  if (len > SIZE_MAX - padding)
+    return AES_WHITEBOX_INVALID_LENGTH;
+  if (!iv || !c || !written || (len != 0 && !m))
+    return AES_WHITEBOX_INVALID_ARGUMENT;
+  const size_t required = len + padding;
+  if (capacity < required)
+    return AES_WHITEBOX_INSUFFICIENT_CAPACITY;
+
+  const size_t full = len - len % 16;
+  // All preconditions of the unpadded API have already been checked.
+  aes_whitebox_encrypt_cbc(iv, m, full, c);
+  const uint8_t* feedback = full == 0 ? iv : c + full - 16;
+  uint8_t last[16];
+  for (size_t j = 0; j < 16; ++j)
+    last[j] = (j < len % 16 ? m[full + j] : padding) ^ feedback[j];
+  PlainCipher(last);
+  for (size_t j = 0; j < 16; ++j)
+    c[full + j] = last[j];
+  *written = required;
+  return AES_WHITEBOX_OK;
+}
+
 void aes_whitebox_encrypt_cfb(const uint8_t iv[16], const uint8_t* m,
     size_t len, uint8_t* c) {
   uint8_t cfb_blk[16];

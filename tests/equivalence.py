@@ -25,8 +25,10 @@ def buffer(data):
     return (U8 * len(data)).from_buffer_copy(data)
 
 
-def oracle(bits, key, data, mode="ecb", iv=None):
-    args = ["openssl", "enc", f"-aes-{bits}-{mode}", "-K", key.hex(), "-nopad", "-nosalt"]
+def oracle(bits, key, data, mode="ecb", iv=None, padded=False):
+    args = ["openssl", "enc", f"-aes-{bits}-{mode}", "-K", key.hex(), "-nosalt"]
+    if not padded:
+        args += ["-nopad"]
     if iv is not None:
         args += ["-iv", iv.hex()]
     return run(args, input=data, capture_output=True).stdout
@@ -79,6 +81,27 @@ def cbc_call(lib, iv, data, in_place):
     return bytes(output)
 
 
+def pkcs7_call(lib, iv, data, in_place):
+    function = lib.aes_whitebox_encrypt_cbc_pkcs7
+    function.argtypes = [PTR, PTR, ctypes.c_size_t, PTR, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    function.restype = ctypes.c_int
+    required = (len(data) // 16 + 1) * 16
+    storage = (U8 * (required + 2))(*([0xa5] * (required + 2)))
+    output = ctypes.cast(ctypes.byref(storage, 1), PTR)
+    source = buffer(data)
+    if in_place:
+        ctypes.memmove(output, source, len(data))
+    iv_buffer = buffer(iv)
+    written = ctypes.c_size_t(123)
+    assert function(iv_buffer, output if in_place else (source if data else None), len(data),
+                    output, required, ctypes.byref(written)) == 0
+    assert written.value == required
+    assert storage[0] == storage[required+1] == 0xa5
+    assert bytes(iv_buffer) == iv
+    assert bytes(source) == data
+    return bytes(storage)[1:required+1]
+
+
 def generate(bits, key, seed, directory):
     run([GEN, f"aes{bits}", key.hex(), "--seed", seed,
          "--output", directory / "aes_whitebox_tables.cc",
@@ -101,6 +124,7 @@ def main():
     total_blocks = 0
     total_modes = 0
     total_cbc = 0
+    total_pkcs7 = 0
     with tempfile.TemporaryDirectory(prefix="equivalence-", dir=ROOT / "build") as temp:
         base = Path(temp)
         for bits in (128, 192, 256):
@@ -124,6 +148,7 @@ def main():
                     assert not hasattr(core, "aes_whitebox_encode_input_block")
                     assert not hasattr(core, "aes_whitebox_encrypt_ctr")
                     assert not hasattr(core, "aes_whitebox_encrypt_cbc")
+                    assert not hasattr(core, "aes_whitebox_encrypt_cbc_pkcs7")
                 for offset in range(0, len(data), 16):
                     plain = data[offset:offset+16]
                     encoded = block(lib, "encode_input", plain)
@@ -149,8 +174,15 @@ def main():
                         for in_place in (False, True):
                             assert cbc_call(lib, iv, plain, in_place) == expected_cbc, (bits, seed, length, in_place)
                             total_cbc += 1
-                print(f"AES-{bits}, seed {seed}: encoded core, modes, CBC, OpenSSL equivalence passed", flush=True)
-    print(f"Equivalence: {total_blocks} blocks, {total_modes} existing-mode checks, {total_cbc} CBC checks; seed replay and core/helper separation passed")
+                for iv in (bytes(16), bytes(rng.randrange(256) for _ in range(16))):
+                    for length in (*range(65), 127, 128, 129, 255, 256, 257, 1023, 1024):
+                        plain = data[:length]
+                        expected_padded = oracle(bits, key, plain, "cbc", iv, padded=True)
+                        for in_place in (False, True):
+                            assert pkcs7_call(lib, iv, plain, in_place) == expected_padded, (bits, seed, length, in_place)
+                            total_pkcs7 += 1
+                print(f"AES-{bits}, seed {seed}: encoded core, modes, CBC/PKCS7, OpenSSL equivalence passed", flush=True)
+    print(f"Equivalence: {total_blocks} blocks, {total_modes} existing-mode checks, {total_cbc} CBC checks, {total_pkcs7} PKCS7 checks; seed replay and core/helper separation passed")
 
 
 if __name__ == "__main__":

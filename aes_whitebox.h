@@ -18,6 +18,21 @@ void aes_whitebox_encrypt_encoded_block(const uint8_t in[16], uint8_t out[16]);
 void aes_whitebox_encode_input_block(const uint8_t in[16], uint8_t out[16]);
 void aes_whitebox_decode_output_block(const uint8_t in[16], uint8_t out[16]);
 
+enum aes_whitebox_status {
+  AES_WHITEBOX_OK = 0,
+  AES_WHITEBOX_INVALID_LENGTH = -1,
+  AES_WHITEBOX_INVALID_ARGUMENT = -2
+};
+
+// CBC encryption without padding: len must be a multiple of 16 and c must
+// hold at least len bytes. Exact in-place use is supported; other overlap is
+// unsupported. iv must not overlap c and is not modified. Each call restarts
+// from iv, which must be unpredictable for each message. No authentication is
+// provided. Invalid length/null arguments return an error before writing c.
+// len == 0 succeeds without accessing any pointer (NULL pointers are allowed).
+int aes_whitebox_encrypt_cbc(const uint8_t iv[16], const uint8_t* m,
+    size_t len, uint8_t* c);
+
 // Mode functions accept ordinary bytes. Exact in-place use is supported;
 // other input/output overlap is not supported. Each call starts from its IV.
 void aes_whitebox_encrypt_cfb(const uint8_t iv[16], const uint8_t* m,

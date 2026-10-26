@@ -45,9 +45,11 @@ files track included headers and tables.
 
 `make test` runs NIST vectors, boundary lengths (including 0/15/16/17/33 bytes),
 exact in-place encryption/decryption, output bounds, invalid CLI/hex input, and
-output-file error handling. `make equivalence` checks three seeds for each
+output-file error handling. CBC encryption also has AES-128/192/256 NIST vectors,
+full-block prefixes, invalid lengths/null arguments, and in-place/bounds tests.
+`make equivalence` checks three seeds for each
 standard key size against OpenSSL, including encoded-core integration,
-CFB/OFB/CTR, counter carry, deterministic replay, and a core-only build.
+CFB/OFB/CTR, CBC encryption, counter carry, deterministic replay, and a core-only build.
 To increase the number of generated implementations:
 
 ```sh
@@ -106,6 +108,30 @@ initial counter in big-endian order. The caller must ensure that counter blocks
 are never reused under the same key and that the counter does not wrap. CFB IVs
 must be unpredictable, and OFB IVs must be unique for a key. These modes do not
 provide authentication or tamper detection.
+
+### CBC encryption without padding
+
+```c
+int aes_whitebox_encrypt_cbc(const uint8_t iv[16], const uint8_t* m,
+    size_t len, uint8_t* c);
+```
+
+This API uses the same generated encryption tables and adapters. It accepts
+ordinary bytes and requires `len` to be a multiple of 16. No padding is added;
+the output is exactly `len` bytes, and the caller must supply that capacity.
+It supports exact in-place encryption; other partial overlap is unsupported.
+The IV must not overlap the output buffer, is preserved, and must be
+unpredictable for each message. Each call starts a new chain from the given IV.
+CBC provides no authentication or tamper detection.
+
+The return values are `AES_WHITEBOX_OK` (0), `AES_WHITEBOX_INVALID_LENGTH` (-1),
+and `AES_WHITEBOX_INVALID_ARGUMENT` (-2). Length is validated first. For a
+nonempty message, IV, input, and output must all be non-null. Errors are returned
+before any output is written. Zero length returns success without accessing any
+pointer, so `aes_whitebox_encrypt_cbc(NULL, NULL, 0, NULL)` is valid.
+
+CBC decryption and PKCS#7 padding are not implemented. The function is omitted
+from `AES_WHITEBOX_CORE_ONLY` builds, as are the other ordinary-byte mode wrappers.
 
 ### Externally encoded core
 

@@ -76,6 +76,29 @@ void aes_whitebox_encrypt_encoded_block(const uint8_t in[16], uint8_t out[16]) {
 
 #ifndef AES_WHITEBOX_CORE_ONLY
 
+int aes_whitebox_encrypt_cbc(const uint8_t iv[16], const uint8_t* m,
+    size_t len, uint8_t* c) {
+  if (len % 16 != 0)
+    return AES_WHITEBOX_INVALID_LENGTH;
+  if (len == 0)
+    return AES_WHITEBOX_OK;
+  if (!iv || !m || !c)
+    return AES_WHITEBOX_INVALID_ARGUMENT;
+
+  uint8_t feedback[16];
+  for (int j = 0; j < 16; ++j)
+    feedback[j] = iv[j];
+
+  for (size_t offset = 0; offset < len; offset += 16) {
+    for (int j = 0; j < 16; ++j)
+      feedback[j] ^= m[offset + j];
+    PlainCipher(feedback);
+    for (int j = 0; j < 16; ++j)
+      c[offset + j] = feedback[j];
+  }
+  return AES_WHITEBOX_OK;
+}
+
 void aes_whitebox_encrypt_cfb(const uint8_t iv[16], const uint8_t* m,
     size_t len, uint8_t* c) {
   uint8_t cfb_blk[16];

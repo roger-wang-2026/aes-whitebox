@@ -15,6 +15,11 @@ LDLIBS ?= -lntl -lgmp -pthread
 
 TEST_PLAIN = 6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710
 
+CBC_TEST_IV = 000102030405060708090a0b0c0d0e0f
+AES128_CBC_TEST_CIPHER = 7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b273bed6b8e3c1743b7116e69e222295163ff1caa1681fac09120eca307586e1a7
+AES192_CBC_TEST_CIPHER = 4f021db243bc633d7178183a9fa071e8b4d9ada9ad7dedf4e5e738763f69145a571b242012fb7ae07fa9baac3df102e008b0e27988598881d920a9e64f5615cd
+AES256_CBC_TEST_CIPHER = f58c4c04d6e5f1ba779eabfb5f7bfbd69cfc4e967edb808d679f777bc6702c7d39f23369a9d9bacfa530e26304231461b2eb05e2c39be9fcda6c19078c6a9d1b
+
 AES128_KEY             = 2b7e151628aed2a6abf7158809cf4f3c
 AES128_CFB_TEST_CIPHER = 3b3fd92eb72dad20333449f8e83cfb4ac8a64537a0b3a93fcde3cdad9f1ce58b26751f67a3cbb140b1808cf187a4f4dfc04b05357c5d1c0eeac4c66f9ff7f2e6
 AES128_CFB_TEST_IV     = 000102030405060708090a0b0c0d0e0f
@@ -85,10 +90,17 @@ build/aes$(1)/aes_tests.o: aes_tests.c aes_whitebox.h hex.h aunit.h | build/aes$
 build/aes$(1)/aes_tests: build/aes$(1)/aes_whitebox.o build/aes$(1)/external_encodings.o build/aes$(1)/aes_tests.o
 	$$(CXX) $$(LDFLAGS) $$^ -o $$@
 
-aes$(1)_tests: build/aes$(1)/aes_tests
+build/aes$(1)/cbc_tests.o: tests/cbc_tests.c aes_whitebox.h hex.h aunit.h | build/aes$(1)
+	$$(CC) $$(CPPFLAGS) $$(CFLAGS) -I. -MMD -MP -c $$< -o $$@
+
+build/aes$(1)/cbc_tests: build/aes$(1)/aes_whitebox.o build/aes$(1)/external_encodings.o build/aes$(1)/cbc_tests.o
+	$$(CXX) $$(LDFLAGS) $$^ -o $$@
+
+aes$(1)_tests: build/aes$(1)/aes_tests build/aes$(1)/cbc_tests
 	./$$< cfb $$(TEST_PLAIN) $$(AES$(1)_CFB_TEST_IV) $$(AES$(1)_CFB_TEST_CIPHER)
 	./$$< ofb $$(TEST_PLAIN) $$(AES$(1)_OFB_TEST_IV) $$(AES$(1)_OFB_TEST_CIPHER)
 	./$$< ctr $$(TEST_PLAIN) $$(AES$(1)_CTR_TEST_NONCE) $$(AES$(1)_CTR_TEST_CIPHER)
+	./build/aes$(1)/cbc_tests $$(TEST_PLAIN) $$(CBC_TEST_IV) $$(AES$(1)_CBC_TEST_CIPHER)
 endef
 
 $(foreach bits,128 192 256,$(eval $(call AES_RULES,$(bits))))

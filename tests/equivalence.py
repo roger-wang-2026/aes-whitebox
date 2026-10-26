@@ -65,6 +65,20 @@ def mode_call(lib, operation, mode, iv, data):
     return bytes(output)
 
 
+def cbc_call(lib, iv, data, in_place):
+    function = lib.aes_whitebox_encrypt_cbc
+    function.argtypes = [PTR, PTR, ctypes.c_size_t, PTR]
+    function.restype = ctypes.c_int
+    source = buffer(data)
+    output = source if in_place else (U8 * len(data))()
+    iv_buffer = buffer(iv)
+    assert function(iv_buffer, source, len(data), output) == 0
+    assert bytes(iv_buffer) == iv
+    if not in_place:
+        assert bytes(source) == data
+    return bytes(output)
+
+
 def generate(bits, key, seed, directory):
     run([GEN, f"aes{bits}", key.hex(), "--seed", seed,
          "--output", directory / "aes_whitebox_tables.cc",
@@ -86,6 +100,7 @@ def main():
     rng = random.Random(20261026)
     total_blocks = 0
     total_modes = 0
+    total_cbc = 0
     with tempfile.TemporaryDirectory(prefix="equivalence-", dir=ROOT / "build") as temp:
         base = Path(temp)
         for bits in (128, 192, 256):
@@ -108,6 +123,7 @@ def main():
                 if index == 0:
                     assert not hasattr(core, "aes_whitebox_encode_input_block")
                     assert not hasattr(core, "aes_whitebox_encrypt_ctr")
+                    assert not hasattr(core, "aes_whitebox_encrypt_cbc")
                 for offset in range(0, len(data), 16):
                     plain = data[offset:offset+16]
                     encoded = block(lib, "encode_input", plain)
@@ -125,8 +141,16 @@ def main():
                             assert actual == expected_mode, (bits, seed, mode, length, "encrypt")
                             assert mode_call(lib, "decrypt", mode, iv, actual) == plain
                             total_modes += 2
-                print(f"AES-{bits}, seed {seed}: encoded core, modes, OpenSSL equivalence passed", flush=True)
-    print(f"Equivalence: {total_blocks} blocks, {total_modes} mode checks; seed replay and core/helper separation passed")
+                # CBC has a separate status-returning, full-block-only API.
+                for iv in (bytes(16), bytes(rng.randrange(256) for _ in range(16))):
+                    for length in (0, 16, 32, 48, 64, 256, 1024):
+                        plain = data[:length]
+                        expected_cbc = oracle(bits, key, plain, "cbc", iv)
+                        for in_place in (False, True):
+                            assert cbc_call(lib, iv, plain, in_place) == expected_cbc, (bits, seed, length, in_place)
+                            total_cbc += 1
+                print(f"AES-{bits}, seed {seed}: encoded core, modes, CBC, OpenSSL equivalence passed", flush=True)
+    print(f"Equivalence: {total_blocks} blocks, {total_modes} existing-mode checks, {total_cbc} CBC checks; seed replay and core/helper separation passed")
 
 
 if __name__ == "__main__":
